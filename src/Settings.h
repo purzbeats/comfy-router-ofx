@@ -1,0 +1,36 @@
+// Per-user settings for the Comfy Router plugin.
+//
+// The API key is deliberately kept out of the Resolve project: it is written to a
+// per-user config file (0600 on POSIX) so that sharing a .drp never leaks a key.
+#pragma once
+
+#include <string>
+
+namespace comfy {
+
+// ~/Library/Application Support/ComfyRouterOFX (macOS), %APPDATA%\ComfyRouterOFX (Windows),
+// $XDG_CONFIG_HOME/comfy-router-ofx or ~/.config/comfy-router-ofx (Linux).
+std::string configDir();
+
+// ~/Movies/ComfyRouter on macOS, ~/Videos/ComfyRouter elsewhere.
+std::string defaultOutputDir();
+
+// Saved key, else the COMFY_API_KEY environment variable, else "".
+std::string loadApiKey();
+bool saveApiKey(const std::string& key, std::string* err = nullptr);
+void clearApiKey();
+
+// "comfyui-…1a2b" style hint for status text; never the whole key.
+std::string maskKey(const std::string& key);
+
+bool ensureDir(const std::string& path, std::string* err = nullptr);
+bool writeFileAtomic(const std::string& path, const std::string& data, std::string* err = nullptr);
+bool readFile(const std::string& path, std::string& out);
+bool fileExists(const std::string& path);
+std::string joinPath(const std::string& a, const std::string& b);
+std::string expandUser(const std::string& path);
+
+// Opens a folder in Finder / Explorer / the desktop file manager.
+void revealInFileManager(const std::string& path);
+
+}  // namespace comfy

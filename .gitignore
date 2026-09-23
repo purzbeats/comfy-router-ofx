@@ -1,0 +1,20 @@
+# build output
+build/
+cmake-build*/
+*.o
+*.obj
+*.ofx
+*.ofx.bundle/
+
+# local test output (may contain generated media)
+cli-out/
+
+# secrets — the plugin stores keys in the per-user config dir, never here
+.env
+.env.*
+config.json
+*.key
+
+.DS_Store
+.vscode/
+.idea/

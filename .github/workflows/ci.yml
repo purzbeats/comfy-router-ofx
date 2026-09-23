@@ -1,0 +1,42 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: No API keys in the tree
+        run: scripts/check-secrets.sh --all
+      - name: No API keys anywhere in history
+        run: |
+          if git log -p --all | grep -nE 'comfyui-[A-Za-z0-9_-]{16,}'; then
+            echo "API key found in history"; exit 1
+          fi
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./build_macos.sh
+      - run: clang -Ithird_party/openfx/include tools/ofx_probe.c -o build/ofx_probe && build/ofx_probe build/ComfyRouter.ofx.bundle/Contents/MacOS/ComfyRouter.ofx
+      - uses: actions/upload-artifact@v4
+        with: { name: ComfyRouter-macOS, path: build/ComfyRouter.ofx.bundle }
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install curl
+        run: vcpkg install curl:x64-windows-static
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+      - run: cmake --build build --config Release
+      - uses: actions/upload-artifact@v4
+        with: { name: ComfyRouter-Windows, path: build/ComfyRouter.ofx.bundle }
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+      - uses: actions/upload-artifact@v4
+        with: { name: ComfyRouter-Linux, path: build/ComfyRouter.ofx.bundle }
