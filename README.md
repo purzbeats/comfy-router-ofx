@@ -73,7 +73,7 @@ sudo cp -R build/ComfyRouter.ofx.bundle /usr/OFX/Plugins/
 | **Image · GPT Image 2.5** | Variant (Flare/Sunburst), Size (Match Timeline = timeline aspect at a 1536 px long edge), Quality, **Background: Transparent/Opaque/Auto**, Image Input |
 | **Video · Seedance 2.5** | Resolution 480p/720p/1080p, Duration 4–15 s, Aspect Ratio, Generate Audio, Seed, Image Input: first frame from the current frame or a file, first + last frame, or reference images |
 | **Reference Images** | Two image files used by the Image Input options |
-| **Placement** | Fit / Fill / Stretch, **Behind Result** (Source / Black / Transparent), Opacity, **Solid Alpha**, Video Start Frame, After Video Ends (hold / loop / show source) |
+| **Placement** | Fit / Fill / Stretch, **Behind Result** (Source / Black / Transparent), Opacity, **Solid Alpha**, Video Start Offset (frames from the clip's start), After Video Ends (hold / loop / show source) |
 | **Buttons** | Generate, Cancel, Refresh Viewer, **Import Generated Media** |
 | **Settings** | API Key, Forget API Key, Provider (Router leg: Default / fal / WaveSpeed / Runware), Output Folder, Reveal Output Folder, FFmpeg Path |
 

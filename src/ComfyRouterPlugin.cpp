@@ -82,7 +82,10 @@ const char* kFit = "fit";
 const char* kLetterbox = "letterbox";
 const char* kOpacity = "opacity";
 const char* kSolidAlpha = "solidAlpha";
-const char* kStartFrame = "startFrame";
+// Offset from the start of the effect's own clip. (An absolute frame broke in Resolve: the
+// time it passes to instanceChanged and to render can be on different bases, e.g. timeline
+// frames from 01:00:00:00 vs clip-local frames, so the video never "started".)
+const char* kStartFrame = "videoStartOffset";
 const char* kAfterEnd = "afterEnd";
 
 const char* kApiKey = "apiKey";
@@ -740,7 +743,14 @@ void ComfyRouterPlugin::onGenerate(const InstanceChangedArgs& args) {
     }
 
     std::string id = spec.id, dir = spec.outDir;
-    if (mode == kModeVideo) startFrame_->setValue(int(std::floor(args.time + 0.5)));
+    if (mode == kModeVideo) {
+        // Start the video at the playhead, measured from this clip's first frame. If the host's
+        // times don't line up (offset outside the clip), start at the clip's first frame.
+        OfxRangeD range = dstClip_->getFrameRange();
+        double off = std::floor(args.time - range.min + 0.5);
+        if (!(off >= 0 && off < range.max - range.min)) off = 0;
+        startFrame_->setValue(int(off));
+    }
     if (deferred) {
         std::lock_guard<std::mutex> g(pendingMutex_);
         pending_ = std::move(spec);
@@ -899,7 +909,8 @@ void ComfyRouterPlugin::renderT(const RenderArguments& args, Image* dst, Image* 
             gen = comfy::cachedImage(meta->file);
         } else if (meta->frames > 0) {
             double hostFps = getFrameRate() > 0 ? getFrameRate() : 24.0;
-            long idx = long(std::floor((t - startFrame) * meta->fps / hostFps + 1e-6));
+            OfxRangeD range = dstClip_->getFrameRange();
+            long idx = long(std::floor((t - range.min - startFrame) * meta->fps / hostFps + 1e-6));
             if (idx >= meta->frames) {
                 if (afterEnd == kAfterHold) idx = meta->frames - 1;
                 else if (afterEnd == kAfterLoop) idx %= meta->frames;
@@ -1207,8 +1218,9 @@ static void describeParams(ImageEffectDescriptor& desc, ContextEnum context) {
     solid->setAnimates(false);
     solid->setParent(*place);
     page->addChild(*solid);
-    defineInt(desc, kStartFrame, "Video Start Frame", "Effect frame where the generated video starts. Set to the playhead "
-              "when you press Generate.", 0, -1000000, 1000000, page, place);
+    defineInt(desc, kStartFrame, "Video Start Offset", "Frames from the start of this clip where the generated video "
+              "begins. Set to the playhead "
+              "when you press Generate.", 0, 0, 1000000, page, place);
     defineChoice(desc, kAfterEnd, "After Video Ends", "What to show past the last generated frame.",
                  {"Hold Last Frame", "Loop", "Show Source"}, kAfterHold, page, place);
 
