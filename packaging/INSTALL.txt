@@ -1,0 +1,20 @@
+Comfy Router for DaVinci Resolve
+================================
+
+Generate images (Nano Banana 2, GPT Image 2.5 with transparency) and video (Seedance 2.5)
+inside Resolve through the Comfy API Router, billed to your own Comfy API key.
+
+Install
+  macOS    Double-click install-macos.command (asks for your password).
+           Manual: copy ComfyRouter.ofx.bundle to /Library/OFX/Plugins, then run
+           sudo xattr -dr com.apple.quarantine /Library/OFX/Plugins/ComfyRouter.ofx.bundle
+  Windows  Right-click install-windows.bat → Run as administrator.
+           Manual: copy ComfyRouter.ofx.bundle to C:\Program Files\Common Files\OFX\Plugins
+           In-effect video preview needs ffmpeg (https://ffmpeg.org) on PATH or set in Settings.
+  Linux    ./install-linux.sh   (copies to /usr/OFX/Plugins; needs libcurl and ffmpeg)
+
+Then restart Resolve and add Effects → OpenFX → Comfy → Comfy Router to a clip,
+or use it as a generator. Paste your Comfy API key into Settings → API Key once;
+it's saved on this computer only, never in your project.
+
+Docs and source: https://github.com/purzbeats/comfy-router-ofx

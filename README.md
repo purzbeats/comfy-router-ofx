@@ -12,7 +12,21 @@ The effect shows the result right in the viewer. Stills are fitted to the frame.
 
 ## Install
 
-### macOS (Apple silicon or Intel)
+### Download a build (easiest)
+
+Grab the zip for your platform from [**Releases**](https://github.com/purzbeats/comfy-router-ofx/releases/latest). GitHub Actions builds every commit, so the newest builds are also under [Actions → Build](https://github.com/purzbeats/comfy-router-ofx/actions/workflows/ci.yml) → a run → **Artifacts**.
+
+| Platform | Zip | Install |
+|---|---|---|
+| macOS 11+ (Apple silicon & Intel) | `ComfyRouter-macOS-universal.zip` | Double-click `install-macos.command` |
+| Windows 10/11 x64 | `ComfyRouter-Windows-x64.zip` | Right-click `install-windows.bat` → **Run as administrator** |
+| Linux x86_64 (Rocky 8+ and newer) | `ComfyRouter-Linux-x86_64.zip` | `./install-linux.sh` |
+
+The macOS build is ad-hoc signed, not notarized. The installer clears the download quarantine flag so Resolve will load it.
+
+To cut a release: `git tag v1.0.1 && git push origin v1.0.1`. The Build workflow then attaches all three zips to a new GitHub Release.
+
+### Build from source: macOS (Apple silicon or Intel)
 
 ```sh
 ./build_macos.sh install      # builds a universal bundle, copies it to /Library/OFX/Plugins (sudo)
@@ -20,7 +34,7 @@ The effect shows the result right in the viewer. Stills are fitted to the frame.
 
 Restart Resolve. You need the Xcode command-line tools (`xcode-select --install`), but not CMake or Homebrew. Video frames are decoded with AVFoundation, so ffmpeg isn't needed either.
 
-### Windows
+### Build from source: Windows
 
 ```bat
 vcpkg install curl:x64-windows-static
@@ -31,7 +45,7 @@ xcopy /E /I build\ComfyRouter.ofx.bundle "C:\Program Files\Common Files\OFX\Plug
 
 In-effect video playback on Windows and Linux uses [ffmpeg](https://ffmpeg.org/download.html). The plugin looks in common install locations; if yours is elsewhere, set **Settings → FFmpeg Path**.
 
-### Linux
+### Build from source: Linux
 
 ```sh
 sudo apt install libcurl4-openssl-dev
