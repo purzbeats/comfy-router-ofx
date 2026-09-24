@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <sstream>
 
 #include "nlohmann/json.hpp"
@@ -109,10 +110,14 @@ void setConfigString(const std::string& name, const std::string& value) {
     saveConfig(j, nullptr);
 }
 
-std::string maskKey(const std::string& key) {
-    if (key.size() <= 8) return "••••";
-    std::string prefix = key.rfind("comfyui-", 0) == 0 ? "comfyui-" : "";
-    return prefix + "…" + key.substr(key.size() - 4);
+std::string redactSecrets(const std::string& text) {
+    std::string out = text;
+    std::string key = loadApiKey();
+    if (key.size() >= 8) {
+        for (size_t pos; (pos = out.find(key)) != std::string::npos;) out.replace(pos, key.size(), "[API key]");
+    }
+    static const std::regex keyShaped(R"(comfyui-[A-Za-z0-9_\-]{6,})");
+    return std::regex_replace(out, keyShaped, "[API key]");
 }
 
 bool ensureDir(const std::string& path, std::string* err) {

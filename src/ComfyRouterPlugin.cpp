@@ -295,7 +295,7 @@ Overlay buildOverlay(const std::string& message, int frameW, int frameH, float b
     int scale = std::max(1, frameH / 300);
     int pad = 6 * scale;
     size_t wrap = size_t(std::max(20, (frameW - 4 * pad) / (6 * scale)));
-    o.text = makeText(wrapText(message, wrap), scale);
+    o.text = makeText(wrapText(comfy::redactSecrets(message), wrap), scale);
     o.barFrac = barFrac;
     int barH = barFrac >= 0 ? 4 * scale : 0;
     o.boxW = std::min(frameW, o.text.w + 2 * pad);
@@ -383,6 +383,7 @@ public:
         jobDir_->getValue(dir);
         ffmpeg_->getValue(ff);
         if (!id.empty()) comfy::resumeJob(dir, id, comfy::loadApiKey(), ff);
+        scrubKeyField();
     }
 
     void render(const RenderArguments& args) override;
@@ -407,10 +408,18 @@ private:
         double par = getProjectPixelAspectRatio();
         return ext.y > 0 ? ext.x * (par > 0 ? par : 1) / ext.y : 16.0 / 9.0;
     }
-    void setStatus(const std::string& s) {
+    void setStatus(const std::string& raw) {
+        std::string s = comfy::redactSecrets(raw);
         std::string cur;
         status_->getValue(cur);
         if (cur != s) status_->setValue(s);
+    }
+    // If the key is still sitting in the API Key field (the host ignored our clear while it
+    // was being edited), save it and clear it now.
+    void scrubKeyField() {
+        std::string k;
+        apiKey_->getValue(k);
+        if (!k.empty()) onApiKey();
     }
     void updateEnabled();
     void syncStatus();
@@ -452,6 +461,7 @@ void ComfyRouterPlugin::updateEnabled() {
 }
 
 void ComfyRouterPlugin::syncStatus() {
+    scrubKeyField();
     if (importClickedAt_ > 0) {
         if (comfy::importRunning()) {
             setStatus("Importing into the Media Pool…");
@@ -470,7 +480,7 @@ void ComfyRouterPlugin::syncStatus() {
     std::string key = comfy::loadApiKey();
     std::string keyNote = key.empty() ? "No API key — add it under Settings." : "";
     if (id.empty()) {
-        setStatus(keyNote.empty() ? "Ready · API key " + comfy::maskKey(key) : keyNote);
+        setStatus(keyNote.empty() ? "Ready · API key saved" : keyNote);
         return;
     }
     if (auto st = comfy::jobStatus(id)) {
@@ -505,12 +515,9 @@ void ComfyRouterPlugin::onApiKey() {
     key.erase(key.find_last_not_of(" \t\r\n") + 1);
     if (key.empty()) return;  // our own clear below re-enters here
     std::string err;
-    if (comfy::saveApiKey(key, &err)) {
-        apiKey_->setValue("");  // never keep the key in the project file
-        setStatus("API key saved on this computer (" + comfy::maskKey(key) + ")");
-    } else {
-        setStatus("Could not save API key: " + err);
-    }
+    bool saved = comfy::saveApiKey(key, &err);
+    apiKey_->setValue("");  // never leave the key in the field (it's also marked non-persistent)
+    setStatus(saved ? "API key saved on this computer." : "Could not save API key: " + err);
 }
 
 bool ComfyRouterPlugin::readFileInput(const std::string& rawPath, int minEdge, comfy::InputImage& out, std::string& err) {
@@ -1150,6 +1157,7 @@ static void describeParams(ImageEffectDescriptor& desc, ContextEnum context) {
     auto* status = defineString(desc, kStatus, "Status", "What the plugin is doing.", eStringTypeLabel, page, nullptr);
     status->setEvaluateOnChange(false);
     status->setCanUndo(false);
+    status->setIsPersistant(false);  // transient; never written into the project
     status->setDefault("Ready");
     defineButton(desc, kRefresh, "Refresh Viewer", "Redraw once a generation finishes.", page, nullptr);
     defineButton(desc, kImportMedia, "Import Generated Media",
@@ -1229,6 +1237,8 @@ static void describeParams(ImageEffectDescriptor& desc, ContextEnum context) {
                              "on this computer only — never in the project — and the field clears itself.",
                              eStringTypeSingleLine, page, settings);
     key->setEvaluateOnChange(false);
+    key->setCanUndo(false);       // undo must not bring the key back into the field
+    key->setIsPersistant(false);  // never written into the project, even if not yet cleared
     defineButton(desc, kClearKey, "Forget API Key", "Remove the key saved on this computer.", page, settings);
     defineChoice(desc, kProvider, "Provider", "Which Router leg serves the request. Default lets Comfy route it.",
                  kProviderOpts, 0, page, settings);
