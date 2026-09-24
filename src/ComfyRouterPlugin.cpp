@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -21,6 +22,7 @@
 
 #include "Jobs.h"
 #include "Media.h"
+#include "ResolveBridge.h"
 #include "RouterClient.h"
 #include "Settings.h"
 #include "stb/stb_easy_font.h"
@@ -32,6 +34,13 @@
     "through the Comfy API Router. " \
     "Enter your Comfy API key under Settings, write a prompt, and press Generate."
 #define kPluginIdentifier "org.comfy.ComfyRouter"
+// Resolve only lists OFX plugins under Generators when they are generator-only, so the
+// generator is registered as its own entry backed by the same effect class.
+#define kGeneratorName "Comfy Router Generator"
+#define kGeneratorIdentifier "org.comfy.ComfyRouterGenerator"
+#define kGeneratorDescription \
+    "Generate Nano Banana 2 / GPT Image 2.5 stills and Seedance 2.5 video on its own track, no clip needed. " \
+    "Transparent GPT Image results key over the tracks below."
 #define kPluginVersionMajor 1
 #define kPluginVersionMinor 0
 
@@ -46,6 +55,7 @@ const char* kPrompt = "prompt";
 const char* kGenerate = "generate";
 const char* kCancel = "cancel";
 const char* kRefresh = "refreshViewer";
+const char* kImportMedia = "importMedia";
 const char* kStatus = "status";
 
 const char* kNbAspect = "nbAspect";
@@ -72,7 +82,10 @@ const char* kFit = "fit";
 const char* kLetterbox = "letterbox";
 const char* kOpacity = "opacity";
 const char* kSolidAlpha = "solidAlpha";
-const char* kStartFrame = "startFrame";
+// Offset from the start of the effect's own clip. (An absolute frame broke in Resolve: the
+// time it passes to instanceChanged and to render can be on different bases, e.g. timeline
+// frames from 01:00:00:00 vs clip-local frames, so the video never "started".)
+const char* kStartFrame = "videoStartOffset";
 const char* kAfterEnd = "afterEnd";
 
 const char* kApiKey = "apiKey";
@@ -282,7 +295,7 @@ Overlay buildOverlay(const std::string& message, int frameW, int frameH, float b
     int scale = std::max(1, frameH / 300);
     int pad = 6 * scale;
     size_t wrap = size_t(std::max(20, (frameW - 4 * pad) / (6 * scale)));
-    o.text = makeText(wrapText(message, wrap), scale);
+    o.text = makeText(wrapText(comfy::redactSecrets(message), wrap), scale);
     o.barFrac = barFrac;
     int barH = barFrac >= 0 ? 4 * scale : 0;
     o.boxW = std::min(frameW, o.text.w + 2 * pad);
@@ -370,6 +383,7 @@ public:
         jobDir_->getValue(dir);
         ffmpeg_->getValue(ff);
         if (!id.empty()) comfy::resumeJob(dir, id, comfy::loadApiKey(), ff);
+        scrubKeyField();
     }
 
     void render(const RenderArguments& args) override;
@@ -394,10 +408,18 @@ private:
         double par = getProjectPixelAspectRatio();
         return ext.y > 0 ? ext.x * (par > 0 ? par : 1) / ext.y : 16.0 / 9.0;
     }
-    void setStatus(const std::string& s) {
+    void setStatus(const std::string& raw) {
+        std::string s = comfy::redactSecrets(raw);
         std::string cur;
         status_->getValue(cur);
         if (cur != s) status_->setValue(s);
+    }
+    // If the key is still sitting in the API Key field (the host ignored our clear while it
+    // was being edited), save it and clear it now.
+    void scrubKeyField() {
+        std::string k;
+        apiKey_->getValue(k);
+        if (!k.empty()) onApiKey();
     }
     void updateEnabled();
     void syncStatus();
@@ -419,6 +441,8 @@ private:
     BooleanParam *sdAudio_, *solidAlpha_;
     DoubleParam* opacity_;
 
+    long long importClickedAt_ = 0;  // unix seconds of the last Import press, 0 = none pending
+
     // A job waiting for render() to supply the current frame (hosts that refuse
     // clipGetImage during instanceChanged).
     std::mutex pendingMutex_;
@@ -437,13 +461,26 @@ void ComfyRouterPlugin::updateEnabled() {
 }
 
 void ComfyRouterPlugin::syncStatus() {
+    scrubKeyField();
+    if (importClickedAt_ > 0) {
+        if (comfy::importRunning()) {
+            setStatus("Importing into the Media Pool…");
+            return;
+        }
+        auto r = comfy::readImportResult(importClickedAt_);
+        if (r.present) {
+            importClickedAt_ = 0;
+            setStatus(r.message);
+            return;
+        }
+    }
     std::string id, dir;
     jobId_->getValue(id);
     jobDir_->getValue(dir);
     std::string key = comfy::loadApiKey();
     std::string keyNote = key.empty() ? "No API key — add it under Settings." : "";
     if (id.empty()) {
-        setStatus(keyNote.empty() ? "Ready · API key " + comfy::maskKey(key) : keyNote);
+        setStatus(keyNote.empty() ? "Ready · API key saved" : keyNote);
         return;
     }
     if (auto st = comfy::jobStatus(id)) {
@@ -451,7 +488,15 @@ void ComfyRouterPlugin::syncStatus() {
             case comfy::JobState::Running: setStatus(st->message + " (" + fmtSeconds(st->elapsedSec) + ")"); return;
             case comfy::JobState::Cancelled: setStatus(st->message); return;
             case comfy::JobState::Failed: setStatus("Error: " + st->message); return;
-            case comfy::JobState::Done: setStatus(st->message); return;
+            case comfy::JobState::Done: {
+                // The first generation on this computer also says how to get results into the Media Pool.
+                std::string hinted = comfy::getConfigString("import_hint_job");
+                if (hinted.empty()) comfy::setConfigString("import_hint_job", hinted = id);
+                setStatus(hinted == id ? st->message + " · Tip: add it to the Media Pool with Workspace → Scripts → "
+                                                       "Comfy Router - Import Generated Media"
+                                       : st->message);
+                return;
+            }
         }
     }
     if (auto meta = comfy::findResult(dir, id)) {
@@ -470,12 +515,9 @@ void ComfyRouterPlugin::onApiKey() {
     key.erase(key.find_last_not_of(" \t\r\n") + 1);
     if (key.empty()) return;  // our own clear below re-enters here
     std::string err;
-    if (comfy::saveApiKey(key, &err)) {
-        apiKey_->setValue("");  // never keep the key in the project file
-        setStatus("API key saved on this computer (" + comfy::maskKey(key) + ")");
-    } else {
-        setStatus("Could not save API key: " + err);
-    }
+    bool saved = comfy::saveApiKey(key, &err);
+    apiKey_->setValue("");  // never leave the key in the field (it's also marked non-persistent)
+    setStatus(saved ? "API key saved on this computer." : "Could not save API key: " + err);
 }
 
 bool ComfyRouterPlugin::readFileInput(const std::string& rawPath, int minEdge, comfy::InputImage& out, std::string& err) {
@@ -558,6 +600,7 @@ void ComfyRouterPlugin::onGenerate(const InstanceChangedArgs& args) {
     ffmpeg_->getValue(spec.ffmpegHint);
     spec.outDir = outputDir();
     spec.id = comfy::newJobId();
+    comfy::recordOutputDir(spec.outDir);  // so Import Generated Media scans this folder
 
     std::string r1, r2, err;
     ref1_->getValue(r1);
@@ -707,7 +750,14 @@ void ComfyRouterPlugin::onGenerate(const InstanceChangedArgs& args) {
     }
 
     std::string id = spec.id, dir = spec.outDir;
-    if (mode == kModeVideo) startFrame_->setValue(int(std::floor(args.time + 0.5)));
+    if (mode == kModeVideo) {
+        // Start the video at the playhead, measured from this clip's first frame. If the host's
+        // times don't line up (offset outside the clip), start at the clip's first frame.
+        OfxRangeD range = dstClip_->getFrameRange();
+        double off = std::floor(args.time - range.min + 0.5);
+        if (!(off >= 0 && off < range.max - range.min)) off = 0;
+        startFrame_->setValue(int(off));
+    }
     if (deferred) {
         std::lock_guard<std::mutex> g(pendingMutex_);
         pending_ = std::move(spec);
@@ -748,6 +798,20 @@ void ComfyRouterPlugin::changedParam(const InstanceChangedArgs& args, const std:
     if (name == kClearKey) {
         comfy::clearApiKey();
         setStatus(comfy::loadApiKey().empty() ? "Saved API key removed." : "Saved key removed; COMFY_API_KEY env var still set.");
+        return;
+    }
+    if (name == kImportMedia) {
+        comfy::recordOutputDir(outputDir());
+        std::string why;
+        importClickedAt_ = (long long)std::time(nullptr);
+        if (comfy::startImportViaFuscript(&why)) {
+            setStatus("Importing into the Media Pool… (press Refresh Viewer to update this line)");
+        } else {
+            importClickedAt_ = 0;
+            comfy::installImportScript();
+            setStatus(why + " Use Workspace → Scripts → Comfy Router - Import Generated Media "
+                      "(restart Resolve once if it isn't listed yet).");
+        }
         return;
     }
     if (name == kReveal) {
@@ -852,7 +916,8 @@ void ComfyRouterPlugin::renderT(const RenderArguments& args, Image* dst, Image* 
             gen = comfy::cachedImage(meta->file);
         } else if (meta->frames > 0) {
             double hostFps = getFrameRate() > 0 ? getFrameRate() : 24.0;
-            long idx = long(std::floor((t - startFrame) * meta->fps / hostFps + 1e-6));
+            OfxRangeD range = dstClip_->getFrameRange();
+            long idx = long(std::floor((t - range.min - startFrame) * meta->fps / hostFps + 1e-6));
             if (idx >= meta->frames) {
                 if (afterEnd == kAfterHold) idx = meta->frames - 1;
                 else if (afterEnd == kAfterLoop) idx %= meta->frames;
@@ -950,15 +1015,46 @@ void ComfyRouterPlugin::renderT(const RenderArguments& args, Image* dst, Image* 
 
 static void unloadPlugin() { comfy::shutdownJobs(); }
 
-mDeclarePluginFactory(ComfyRouterFactory, {}, { unloadPlugin(); });
+// Installing the import script at load puts it in Workspace → Scripts from the next launch.
+mDeclarePluginFactory(ComfyRouterFactory, { comfy::installImportScript(); }, { unloadPlugin(); });
+mDeclarePluginFactory(ComfyRouterGeneratorFactory, {}, {});
+
+static void describeCommon(ImageEffectDescriptor& desc);
+static void describeParams(ImageEffectDescriptor& desc, ContextEnum context);
 
 void ComfyRouterFactory::describe(ImageEffectDescriptor& desc) {
     desc.setLabels(kPluginName, kPluginName, kPluginName);
-    desc.setPluginGrouping(kPluginGrouping);
     desc.setPluginDescription(kPluginDescription);
     desc.addSupportedContext(eContextFilter);
     desc.addSupportedContext(eContextGeneral);
+    describeCommon(desc);
+}
+
+void ComfyRouterGeneratorFactory::describe(ImageEffectDescriptor& desc) {
+    desc.setLabels(kGeneratorName, kGeneratorName, kGeneratorName);
+    desc.setPluginDescription(kGeneratorDescription);
     desc.addSupportedContext(eContextGenerator);
+    describeCommon(desc);
+}
+
+void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextEnum context) {
+    describeParams(desc, context);
+}
+
+void ComfyRouterGeneratorFactory::describeInContext(ImageEffectDescriptor& desc, ContextEnum context) {
+    describeParams(desc, context);
+}
+
+ImageEffect* ComfyRouterFactory::createInstance(OfxImageEffectHandle handle, ContextEnum) {
+    return new ComfyRouterPlugin(handle);
+}
+
+ImageEffect* ComfyRouterGeneratorFactory::createInstance(OfxImageEffectHandle handle, ContextEnum) {
+    return new ComfyRouterPlugin(handle);
+}
+
+static void describeCommon(ImageEffectDescriptor& desc) {
+    desc.setPluginGrouping(kPluginGrouping);
     desc.addSupportedBitDepth(eBitDepthUByte);
     desc.addSupportedBitDepth(eBitDepthUShort);
     desc.addSupportedBitDepth(eBitDepthFloat);
@@ -1036,7 +1132,7 @@ GroupParamDescriptor* defineGroup(ImageEffectDescriptor& desc, const char* name,
 
 }  // namespace
 
-void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextEnum context) {
+static void describeParams(ImageEffectDescriptor& desc, ContextEnum context) {
     if (context != eContextGenerator) {
         ClipDescriptor* src = desc.defineClip(kOfxImageEffectSimpleSourceClipName);
         src->addSupportedComponent(ePixelComponentRGBA);
@@ -1061,8 +1157,14 @@ void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextE
     auto* status = defineString(desc, kStatus, "Status", "What the plugin is doing.", eStringTypeLabel, page, nullptr);
     status->setEvaluateOnChange(false);
     status->setCanUndo(false);
+    status->setIsPersistant(false);  // transient; never written into the project
     status->setDefault("Ready");
     defineButton(desc, kRefresh, "Refresh Viewer", "Redraw once a generation finishes.", page, nullptr);
+    defineButton(desc, kImportMedia, "Import Generated Media",
+                 "Import every Comfy Router generation that isn't in the Media Pool yet into a \"Comfy Router\" bin "
+                 "(stills keep alpha, videos keep audio). Works from the effect in Resolve Studio with External "
+                 "scripting set to Local; in any edition, use Workspace → Scripts → Comfy Router - Import Generated "
+                 "Media.", page, nullptr);
 
     auto* nb = defineGroup(desc, "grpImage", "Image · Nano Banana 2", true, page);
     defineChoice(desc, kNbAspect, "Aspect Ratio", "Output aspect ratio. Match Timeline picks the closest supported ratio.",
@@ -1124,8 +1226,9 @@ void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextE
     solid->setAnimates(false);
     solid->setParent(*place);
     page->addChild(*solid);
-    defineInt(desc, kStartFrame, "Video Start Frame", "Effect frame where the generated video starts. Set to the playhead "
-              "when you press Generate.", 0, -1000000, 1000000, page, place);
+    defineInt(desc, kStartFrame, "Video Start Offset", "Frames from the start of this clip where the generated video "
+              "begins. Set to the playhead "
+              "when you press Generate.", 0, 0, 1000000, page, place);
     defineChoice(desc, kAfterEnd, "After Video Ends", "What to show past the last generated frame.",
                  {"Hold Last Frame", "Loop", "Show Source"}, kAfterHold, page, place);
 
@@ -1134,6 +1237,8 @@ void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextE
                              "on this computer only — never in the project — and the field clears itself.",
                              eStringTypeSingleLine, page, settings);
     key->setEvaluateOnChange(false);
+    key->setCanUndo(false);       // undo must not bring the key back into the field
+    key->setIsPersistant(false);  // never written into the project, even if not yet cleared
     defineButton(desc, kClearKey, "Forget API Key", "Remove the key saved on this computer.", page, settings);
     defineChoice(desc, kProvider, "Provider", "Which Router leg serves the request. Default lets Comfy route it.",
                  kProviderOpts, 0, page, settings);
@@ -1154,15 +1259,13 @@ void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextE
     tick->setCanUndo(false);
 }
 
-ImageEffect* ComfyRouterFactory::createInstance(OfxImageEffectHandle handle, ContextEnum) {
-    return new ComfyRouterPlugin(handle);
-}
-
 namespace OFX {
 namespace Plugin {
 void getPluginIDs(PluginFactoryArray& ids) {
-    static ComfyRouterFactory p(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
-    ids.push_back(&p);
+    static ComfyRouterFactory effect(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
+    static ComfyRouterGeneratorFactory generator(kGeneratorIdentifier, kPluginVersionMajor, kPluginVersionMinor);
+    ids.push_back(&effect);
+    ids.push_back(&generator);
 }
 }  // namespace Plugin
 }  // namespace OFX

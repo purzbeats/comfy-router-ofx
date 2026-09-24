@@ -20,8 +20,13 @@ std::string loadApiKey();
 bool saveApiKey(const std::string& key, std::string* err = nullptr);
 void clearApiKey();
 
-// "comfyui-…1a2b" style hint for status text; never the whole key.
-std::string maskKey(const std::string& key);
+// Small per-user flags kept next to the key in config.json.
+std::string getConfigString(const std::string& name);
+void setConfigString(const std::string& name, const std::string& value);
+
+// Removes the saved key and anything key-shaped (comfyui-…) from text that will be shown
+// or saved (status line, overlays, error files). Nothing user-visible should skip this.
+std::string redactSecrets(const std::string& text);
 
 bool ensureDir(const std::string& path, std::string* err = nullptr);
 bool writeFileAtomic(const std::string& path, const std::string& data, std::string* err = nullptr);

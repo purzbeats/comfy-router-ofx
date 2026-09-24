@@ -19,9 +19,14 @@ endif()
 
 find_package(CURL REQUIRED)
 
+# Embed the Media Pool import script as a C++ raw string (re-run CMake when it changes).
+file(READ ${CMAKE_SOURCE_DIR}/src/ImportScript.lua IMPORT_SCRIPT)
+file(WRITE ${CMAKE_BINARY_DIR}/gen/ImportScript.inc "R\"LUA(${IMPORT_SCRIPT})LUA\"\n")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/ImportScript.lua)
+
 file(GLOB OFX_SUPPORT_SOURCES third_party/openfx/Support/Library/*.cpp)
 set(SOURCES
-  src/ComfyRouterPlugin.cpp src/RouterClient.cpp src/Media.cpp src/Jobs.cpp src/Settings.cpp
+  src/ComfyRouterPlugin.cpp src/RouterClient.cpp src/Media.cpp src/Jobs.cpp src/Settings.cpp src/ResolveBridge.cpp
   ${OFX_SUPPORT_SOURCES})
 if(APPLE)
   enable_language(OBJCXX)
@@ -31,7 +36,7 @@ endif()
 
 add_library(ComfyRouter MODULE ${SOURCES})
 target_include_directories(ComfyRouter PRIVATE
-  third_party/openfx/include third_party/openfx/Support/include third_party src)
+  third_party/openfx/include third_party/openfx/Support/include third_party src ${CMAKE_BINARY_DIR}/gen)
 target_link_libraries(ComfyRouter PRIVATE CURL::libcurl)
 set_target_properties(ComfyRouter PROPERTIES PREFIX "" SUFFIX ".ofx")
 

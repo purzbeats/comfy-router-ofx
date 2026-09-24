@@ -42,14 +42,16 @@ std::string metaDir(const std::string& outDir) { return joinPath(joinPath(outDir
 std::string metaPath(const std::string& outDir, const std::string& id) { return joinPath(metaDir(outDir), id + ".json"); }
 
 void setMessage(const std::shared_ptr<Job>& job, const std::string& msg) {
+    std::string clean = redactSecrets(msg);
     std::lock_guard<std::mutex> g(reg().m);
-    job->status.message = msg;
+    job->status.message = clean;
 }
 
 void finishJob(const std::shared_ptr<Job>& job, JobState state, const std::string& msg, double credits) {
+    std::string clean = redactSecrets(msg);
     std::lock_guard<std::mutex> g(reg().m);
     job->status.state = state;
-    job->status.message = msg;
+    job->status.message = clean;
     job->status.credits = credits;
     job->status.elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - job->started).count();
 }
@@ -79,7 +81,7 @@ void fail(const JobSpec& spec, const std::shared_ptr<Job>& job, const Result* re
         finishJob(job, JobState::Failed, msg, -1);  // keep the pending record so a reopen resumes it
         return;
     }
-    json j = {{"error", msg}, {"kind", spec.kind == JobKind::Video ? "video" : "image"}};
+    json j = {{"error", redactSecrets(msg)}, {"kind", spec.kind == JobKind::Video ? "video" : "image"}};
     if (res) {
         j["request_id"] = res->requestId;
         j["error_type"] = res->errorType;
@@ -217,8 +219,10 @@ std::string newJobId() {
     static std::mt19937_64 rng{std::random_device{}()};
     static std::mutex m;
     std::lock_guard<std::mutex> g(m);
-    char out[64];
-    std::snprintf(out, sizeof out, "%s-%04x", ts, unsigned(rng() & 0xffff));
+    // Letters only at the end: Resolve treats names ending in digits (…-0777.png) as image
+    // sequences and would merge separate generations on import.
+    std::string out = std::string(ts) + "-";
+    for (int i = 0; i < 4; ++i) out += char('a' + rng() % 26);
     return out;
 }
 

@@ -14,18 +14,25 @@ mkdir -p "$OBJ" "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
 ARCH_FLAGS=()
 for a in $ARCHS; do ARCH_FLAGS+=(-arch "$a"); done
+# The Media Pool import script is embedded as a C++ raw string.
+mkdir -p "$OUT/gen"
+{ printf 'R"LUA('; cat src/ImportScript.lua; printf ')LUA"\n'; } > "$OUT/gen/ImportScript.inc.tmp"
+cmp -s "$OUT/gen/ImportScript.inc.tmp" "$OUT/gen/ImportScript.inc" 2>/dev/null && rm "$OUT/gen/ImportScript.inc.tmp" \
+  || mv "$OUT/gen/ImportScript.inc.tmp" "$OUT/gen/ImportScript.inc"
+
 COMMON=(-O2 -g0 -fPIC -fvisibility=hidden -fvisibility-inlines-hidden "-mmacosx-version-min=$MIN_MACOS" "${ARCH_FLAGS[@]}"
-        -Ithird_party/openfx/include -Ithird_party/openfx/Support/include -Ithird_party -Isrc
+        -Ithird_party/openfx/include -Ithird_party/openfx/Support/include -Ithird_party -Isrc -I"$OUT/gen"
         -Wall -Wno-unused-parameter -Wno-deprecated-declarations)
 CXX=${CXX:-clang++}
 
-SOURCES=(src/ComfyRouterPlugin.cpp src/RouterClient.cpp src/Media.cpp src/Jobs.cpp src/Settings.cpp)
+SOURCES=(src/ComfyRouterPlugin.cpp src/RouterClient.cpp src/Media.cpp src/Jobs.cpp src/Settings.cpp src/ResolveBridge.cpp)
 SUPPORT=(third_party/openfx/Support/Library/*.cpp)
 
 objs=()
 compile() {  # src out extra-flags...
   local src=$1 out=$2; shift 2
-  if [[ ! -f "$out" || "$src" -nt "$out" || src/RouterClient.h -nt "$out" || src/Jobs.h -nt "$out" || src/Media.h -nt "$out" ]]; then
+  if [[ ! -f "$out" || "$src" -nt "$out" || src/RouterClient.h -nt "$out" || src/Jobs.h -nt "$out" || src/Media.h -nt "$out" \
+        || src/ResolveBridge.h -nt "$out" || "$OUT/gen/ImportScript.inc" -nt "$out" ]]; then
     echo "  CXX $src"
     "$CXX" "${COMMON[@]}" "$@" -c "$src" -o "$out" &
   fi
