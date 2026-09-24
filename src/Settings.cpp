@@ -98,6 +98,17 @@ void clearApiKey() {
     saveConfig(j, nullptr);
 }
 
+std::string getConfigString(const std::string& name) {
+    auto j = loadConfig();
+    return j.contains(name) && j[name].is_string() ? j[name].get<std::string>() : "";
+}
+
+void setConfigString(const std::string& name, const std::string& value) {
+    auto j = loadConfig();
+    j[name] = value;
+    saveConfig(j, nullptr);
+}
+
 std::string maskKey(const std::string& key) {
     if (key.size() <= 8) return "••••";
     std::string prefix = key.rfind("comfyui-", 0) == 0 ? "comfyui-" : "";

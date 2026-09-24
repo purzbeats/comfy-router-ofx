@@ -468,7 +468,15 @@ void ComfyRouterPlugin::syncStatus() {
             case comfy::JobState::Running: setStatus(st->message + " (" + fmtSeconds(st->elapsedSec) + ")"); return;
             case comfy::JobState::Cancelled: setStatus(st->message); return;
             case comfy::JobState::Failed: setStatus("Error: " + st->message); return;
-            case comfy::JobState::Done: setStatus(st->message); return;
+            case comfy::JobState::Done: {
+                // The first generation on this computer also says how to get results into the Media Pool.
+                std::string hinted = comfy::getConfigString("import_hint_job");
+                if (hinted.empty()) comfy::setConfigString("import_hint_job", hinted = id);
+                setStatus(hinted == id ? st->message + " · Tip: add it to the Media Pool with Workspace → Scripts → "
+                                                       "Comfy Router - Import Generated Media"
+                                       : st->message);
+                return;
+            }
         }
     }
     if (auto meta = comfy::findResult(dir, id)) {

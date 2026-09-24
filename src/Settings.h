@@ -20,6 +20,10 @@ std::string loadApiKey();
 bool saveApiKey(const std::string& key, std::string* err = nullptr);
 void clearApiKey();
 
+// Small per-user flags kept next to the key in config.json.
+std::string getConfigString(const std::string& name);
+void setConfigString(const std::string& name, const std::string& value);
+
 // "comfyui-…1a2b" style hint for status text; never the whole key.
 std::string maskKey(const std::string& key);
 
