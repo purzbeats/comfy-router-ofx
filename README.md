@@ -55,7 +55,10 @@ sudo cp -R build/ComfyRouter.ofx.bundle /usr/OFX/Plugins/
 
 ## Use it
 
-1. In the Edit or Color page, open **Effects → OpenFX → Comfy → Comfy Router**. Drop it on a clip, or add it as a **generator**. As a generator, results with transparency composite over the tracks below.
+1. Add it to your timeline. You don't need a clip; pick whichever route fits:
+   - **Comfy Router Generator** (Effects → Generators, or OpenFX → Comfy): drag it onto any track, like a Solid Color. Transparent GPT Image results key over the tracks below.
+   - **On an Adjustment Clip** (Effects → Toolbox → Effects → Adjustment Clip): drop the Adjustment Clip on a track above your footage, then drag **Comfy Router** onto it. "Current frame" inputs then see everything on the tracks below.
+   - **On a clip** (OpenFX → Comfy → Comfy Router): to generate from, edit or animate that clip's frames.
 2. **Settings → API Key**: paste your Comfy API key (`comfyui-…`) and press Enter. You only do this once per computer (see [Your API key](#your-api-key)).
 3. Pick a model in **Generate**, write a **Prompt**, and press **Generate**.
 4. A progress bar shows in the viewer while the job runs. Stills take about 10 seconds; Seedance takes about 2–3 minutes. When it's done, move the playhead or press **Refresh Viewer**.

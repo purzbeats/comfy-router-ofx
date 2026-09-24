@@ -34,6 +34,13 @@
     "through the Comfy API Router. " \
     "Enter your Comfy API key under Settings, write a prompt, and press Generate."
 #define kPluginIdentifier "org.comfy.ComfyRouter"
+// Resolve only lists OFX plugins under Generators when they are generator-only, so the
+// generator is registered as its own entry backed by the same effect class.
+#define kGeneratorName "Comfy Router Generator"
+#define kGeneratorIdentifier "org.comfy.ComfyRouterGenerator"
+#define kGeneratorDescription \
+    "Generate Nano Banana 2 / GPT Image 2.5 stills and Seedance 2.5 video on its own track, no clip needed. " \
+    "Transparent GPT Image results key over the tracks below."
 #define kPluginVersionMajor 1
 #define kPluginVersionMinor 0
 
@@ -992,14 +999,44 @@ static void unloadPlugin() { comfy::shutdownJobs(); }
 
 // Installing the import script at load puts it in Workspace → Scripts from the next launch.
 mDeclarePluginFactory(ComfyRouterFactory, { comfy::installImportScript(); }, { unloadPlugin(); });
+mDeclarePluginFactory(ComfyRouterGeneratorFactory, {}, {});
+
+static void describeCommon(ImageEffectDescriptor& desc);
+static void describeParams(ImageEffectDescriptor& desc, ContextEnum context);
 
 void ComfyRouterFactory::describe(ImageEffectDescriptor& desc) {
     desc.setLabels(kPluginName, kPluginName, kPluginName);
-    desc.setPluginGrouping(kPluginGrouping);
     desc.setPluginDescription(kPluginDescription);
     desc.addSupportedContext(eContextFilter);
     desc.addSupportedContext(eContextGeneral);
+    describeCommon(desc);
+}
+
+void ComfyRouterGeneratorFactory::describe(ImageEffectDescriptor& desc) {
+    desc.setLabels(kGeneratorName, kGeneratorName, kGeneratorName);
+    desc.setPluginDescription(kGeneratorDescription);
     desc.addSupportedContext(eContextGenerator);
+    describeCommon(desc);
+}
+
+void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextEnum context) {
+    describeParams(desc, context);
+}
+
+void ComfyRouterGeneratorFactory::describeInContext(ImageEffectDescriptor& desc, ContextEnum context) {
+    describeParams(desc, context);
+}
+
+ImageEffect* ComfyRouterFactory::createInstance(OfxImageEffectHandle handle, ContextEnum) {
+    return new ComfyRouterPlugin(handle);
+}
+
+ImageEffect* ComfyRouterGeneratorFactory::createInstance(OfxImageEffectHandle handle, ContextEnum) {
+    return new ComfyRouterPlugin(handle);
+}
+
+static void describeCommon(ImageEffectDescriptor& desc) {
+    desc.setPluginGrouping(kPluginGrouping);
     desc.addSupportedBitDepth(eBitDepthUByte);
     desc.addSupportedBitDepth(eBitDepthUShort);
     desc.addSupportedBitDepth(eBitDepthFloat);
@@ -1077,7 +1114,7 @@ GroupParamDescriptor* defineGroup(ImageEffectDescriptor& desc, const char* name,
 
 }  // namespace
 
-void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextEnum context) {
+static void describeParams(ImageEffectDescriptor& desc, ContextEnum context) {
     if (context != eContextGenerator) {
         ClipDescriptor* src = desc.defineClip(kOfxImageEffectSimpleSourceClipName);
         src->addSupportedComponent(ePixelComponentRGBA);
@@ -1200,15 +1237,13 @@ void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextE
     tick->setCanUndo(false);
 }
 
-ImageEffect* ComfyRouterFactory::createInstance(OfxImageEffectHandle handle, ContextEnum) {
-    return new ComfyRouterPlugin(handle);
-}
-
 namespace OFX {
 namespace Plugin {
 void getPluginIDs(PluginFactoryArray& ids) {
-    static ComfyRouterFactory p(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
-    ids.push_back(&p);
+    static ComfyRouterFactory effect(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
+    static ComfyRouterGeneratorFactory generator(kGeneratorIdentifier, kPluginVersionMajor, kPluginVersionMinor);
+    ids.push_back(&effect);
+    ids.push_back(&generator);
 }
 }  // namespace Plugin
 }  // namespace OFX
