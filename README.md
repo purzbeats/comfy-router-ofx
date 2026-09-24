@@ -71,6 +71,7 @@ sudo cp -R build/ComfyRouter.ofx.bundle /usr/OFX/Plugins/
 | **Video · Seedance 2.5** | Resolution 480p/720p/1080p, Duration 4–15 s, Aspect Ratio, Generate Audio, Seed, Image Input: first frame from the current frame or a file, first + last frame, or reference images |
 | **Reference Images** | Two image files used by the Image Input options |
 | **Placement** | Fit / Fill / Stretch, **Behind Result** (Source / Black / Transparent), Opacity, **Solid Alpha**, Video Start Frame, After Video Ends (hold / loop / show source) |
+| **Buttons** | Generate, Cancel, Refresh Viewer, **Import Generated Media** |
 | **Settings** | API Key, Forget API Key, Provider (Router leg: Default / fal / WaveSpeed / Runware), Output Folder, Reveal Output Folder, FFmpeg Path |
 
 **Transparent elements.** Choose **Image · GPT Image 2.5** with **Background: Transparent**. Prompt for an isolated element, for example: *"a glossy gold 3D star badge with the word COMFY, isolated element, no background"*.
@@ -80,6 +81,18 @@ sudo cp -R build/ComfyRouter.ofx.bundle /usr/OFX/Plugins/
 - GPT Image returns about 99% alpha inside "solid" areas. **Solid Alpha** (on by default) snaps those pixels to fully opaque so the clip doesn't faintly show through.
 
 **Image-to-video from a still.** Generate a still with Nano Banana 2, set **Reference Image 1** to the saved PNG, then generate Seedance with **First Frame: Reference Image 1**. To continue the shot under the playhead, use **First Frame: Current Frame** instead. The video starts at the frame where you pressed Generate.
+
+### Import generations into the Media Pool
+
+Resolve doesn't let effects touch the Media Pool, so imports go through a small Lua script that the plugin installs for you: **Workspace → Scripts → Comfy Router - Import Generated Media**. It works in Resolve and Resolve Studio.
+
+- It creates a **Comfy Router** bin and imports every generation that isn't in the Media Pool yet, oldest first. Stills keep their alpha; Seedance MP4s keep their audio.
+- It skips files that are already in the pool, so it's safe to run any time.
+- It scans every output folder the plugin has used.
+
+The plugin writes the script on load, so it appears in the menu after one Resolve restart. It lives in `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/` on macOS, `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\` on Windows, and `~/.local/share/DaVinciResolve/Fusion/Scripts/Utility/` on Linux.
+
+The effect's **Import Generated Media** button runs the same script through Resolve's bundled `fuscript`. That only reaches a running Resolve in **Studio** with **Preferences → System → General → External scripting using: Local**. Otherwise the Status line points you to the Scripts menu entry.
 
 ### Where results go
 

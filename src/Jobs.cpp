@@ -217,8 +217,10 @@ std::string newJobId() {
     static std::mt19937_64 rng{std::random_device{}()};
     static std::mutex m;
     std::lock_guard<std::mutex> g(m);
-    char out[64];
-    std::snprintf(out, sizeof out, "%s-%04x", ts, unsigned(rng() & 0xffff));
+    // Letters only at the end: Resolve treats names ending in digits (…-0777.png) as image
+    // sequences and would merge separate generations on import.
+    std::string out = std::string(ts) + "-";
+    for (int i = 0; i < 4; ++i) out += char('a' + rng() % 26);
     return out;
 }
 

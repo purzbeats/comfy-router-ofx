@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -21,6 +22,7 @@
 
 #include "Jobs.h"
 #include "Media.h"
+#include "ResolveBridge.h"
 #include "RouterClient.h"
 #include "Settings.h"
 #include "stb/stb_easy_font.h"
@@ -46,6 +48,7 @@ const char* kPrompt = "prompt";
 const char* kGenerate = "generate";
 const char* kCancel = "cancel";
 const char* kRefresh = "refreshViewer";
+const char* kImportMedia = "importMedia";
 const char* kStatus = "status";
 
 const char* kNbAspect = "nbAspect";
@@ -419,6 +422,8 @@ private:
     BooleanParam *sdAudio_, *solidAlpha_;
     DoubleParam* opacity_;
 
+    long long importClickedAt_ = 0;  // unix seconds of the last Import press, 0 = none pending
+
     // A job waiting for render() to supply the current frame (hosts that refuse
     // clipGetImage during instanceChanged).
     std::mutex pendingMutex_;
@@ -437,6 +442,18 @@ void ComfyRouterPlugin::updateEnabled() {
 }
 
 void ComfyRouterPlugin::syncStatus() {
+    if (importClickedAt_ > 0) {
+        if (comfy::importRunning()) {
+            setStatus("Importing into the Media Pool…");
+            return;
+        }
+        auto r = comfy::readImportResult(importClickedAt_);
+        if (r.present) {
+            importClickedAt_ = 0;
+            setStatus(r.message);
+            return;
+        }
+    }
     std::string id, dir;
     jobId_->getValue(id);
     jobDir_->getValue(dir);
@@ -558,6 +575,7 @@ void ComfyRouterPlugin::onGenerate(const InstanceChangedArgs& args) {
     ffmpeg_->getValue(spec.ffmpegHint);
     spec.outDir = outputDir();
     spec.id = comfy::newJobId();
+    comfy::recordOutputDir(spec.outDir);  // so Import Generated Media scans this folder
 
     std::string r1, r2, err;
     ref1_->getValue(r1);
@@ -748,6 +766,20 @@ void ComfyRouterPlugin::changedParam(const InstanceChangedArgs& args, const std:
     if (name == kClearKey) {
         comfy::clearApiKey();
         setStatus(comfy::loadApiKey().empty() ? "Saved API key removed." : "Saved key removed; COMFY_API_KEY env var still set.");
+        return;
+    }
+    if (name == kImportMedia) {
+        comfy::recordOutputDir(outputDir());
+        std::string why;
+        importClickedAt_ = (long long)std::time(nullptr);
+        if (comfy::startImportViaFuscript(&why)) {
+            setStatus("Importing into the Media Pool… (press Refresh Viewer to update this line)");
+        } else {
+            importClickedAt_ = 0;
+            comfy::installImportScript();
+            setStatus(why + " Use Workspace → Scripts → Comfy Router - Import Generated Media "
+                      "(restart Resolve once if it isn't listed yet).");
+        }
         return;
     }
     if (name == kReveal) {
@@ -950,7 +982,8 @@ void ComfyRouterPlugin::renderT(const RenderArguments& args, Image* dst, Image* 
 
 static void unloadPlugin() { comfy::shutdownJobs(); }
 
-mDeclarePluginFactory(ComfyRouterFactory, {}, { unloadPlugin(); });
+// Installing the import script at load puts it in Workspace → Scripts from the next launch.
+mDeclarePluginFactory(ComfyRouterFactory, { comfy::installImportScript(); }, { unloadPlugin(); });
 
 void ComfyRouterFactory::describe(ImageEffectDescriptor& desc) {
     desc.setLabels(kPluginName, kPluginName, kPluginName);
@@ -1063,6 +1096,11 @@ void ComfyRouterFactory::describeInContext(ImageEffectDescriptor& desc, ContextE
     status->setCanUndo(false);
     status->setDefault("Ready");
     defineButton(desc, kRefresh, "Refresh Viewer", "Redraw once a generation finishes.", page, nullptr);
+    defineButton(desc, kImportMedia, "Import Generated Media",
+                 "Import every Comfy Router generation that isn't in the Media Pool yet into a \"Comfy Router\" bin "
+                 "(stills keep alpha, videos keep audio). Works from the effect in Resolve Studio with External "
+                 "scripting set to Local; in any edition, use Workspace → Scripts → Comfy Router - Import Generated "
+                 "Media.", page, nullptr);
 
     auto* nb = defineGroup(desc, "grpImage", "Image · Nano Banana 2", true, page);
     defineChoice(desc, kNbAspect, "Aspect Ratio", "Output aspect ratio. Match Timeline picks the closest supported ratio.",
