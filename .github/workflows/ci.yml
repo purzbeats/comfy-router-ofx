@@ -1,5 +1,17 @@
-name: CI
-on: [push, pull_request]
+name: Build
+
+# Every push / PR builds installable zips for macOS, Windows and Linux (downloadable from the
+# run's Artifacts). Pushing a tag like v1.0.0 also publishes them as a GitHub Release.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   secrets:
     runs-on: ubuntu-latest
@@ -13,30 +25,84 @@ jobs:
           if git log -p --all | grep -nE 'comfyui-[A-Za-z0-9_-]{16,}'; then
             echo "API key found in history"; exit 1
           fi
+
   macos:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - run: ./build_macos.sh
-      - run: clang -Ithird_party/openfx/include tools/ofx_probe.c -o build/ofx_probe && build/ofx_probe build/ComfyRouter.ofx.bundle/Contents/MacOS/ComfyRouter.ofx
+      - name: Build universal bundle (arm64 + x86_64)
+        run: ./build_macos.sh
+      - name: Load it like a host
+        run: |
+          clang -Ithird_party/openfx/include tools/ofx_probe.c -o build/ofx_probe
+          build/ofx_probe build/ComfyRouter.ofx.bundle/Contents/MacOS/ComfyRouter.ofx
+          lipo -info build/ComfyRouter.ofx.bundle/Contents/MacOS/ComfyRouter.ofx
+      - name: Package
+        run: |
+          mkdir -p dist/stage
+          cp -R build/ComfyRouter.ofx.bundle packaging/install-macos.command packaging/INSTALL.txt dist/stage/
+          (cd dist/stage && zip -qry ../ComfyRouter-macOS-universal.zip .)
+          unzip -l dist/ComfyRouter-macOS-universal.zip
       - uses: actions/upload-artifact@v4
-        with: { name: ComfyRouter-macOS, path: build/ComfyRouter.ofx.bundle }
+        with: { name: ComfyRouter-macOS-universal, path: dist/ComfyRouter-macOS-universal.zip }
+
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install curl
+      - name: Install curl (static)
         run: vcpkg install curl:x64-windows-static
       - name: Configure
         run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
-      - run: cmake --build build --config Release
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/stage | Out-Null
+          Copy-Item -Recurse build/ComfyRouter.ofx.bundle dist/stage/
+          Copy-Item packaging/install-windows.bat, packaging/INSTALL.txt dist/stage/
+          Compress-Archive -Path dist/stage/* -DestinationPath dist/ComfyRouter-Windows-x64.zip
+          Get-ChildItem -Recurse dist/stage | Select-Object FullName
       - uses: actions/upload-artifact@v4
-        with: { name: ComfyRouter-Windows, path: build/ComfyRouter.ofx.bundle }
+        with: { name: ComfyRouter-Windows-x64, path: dist/ComfyRouter-Windows-x64.zip }
+
   linux:
     runs-on: ubuntu-latest
+    # glibc 2.28 = Rocky/RHEL 8, the oldest distro Resolve supports; newer distros load it too.
+    container: quay.io/pypa/manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
-      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+      - name: Install libcurl headers
+        run: dnf install -y libcurl-devel zip
+      - name: Build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+      - name: Load it like a host
+        run: |
+          gcc -Ithird_party/openfx/include tools/ofx_probe.c -o build/ofx_probe -ldl
+          build/ofx_probe "$PWD/build/ComfyRouter.ofx.bundle/Contents/Linux-x86-64/ComfyRouter.ofx"
+      - name: Package
+        run: |
+          mkdir -p dist/stage
+          cp -R build/ComfyRouter.ofx.bundle packaging/install-linux.sh packaging/INSTALL.txt dist/stage/
+          (cd dist/stage && zip -qry ../ComfyRouter-Linux-x86_64.zip .)
+          unzip -l dist/ComfyRouter-Linux-x86_64.zip
       - uses: actions/upload-artifact@v4
-        with: { name: ComfyRouter-Linux, path: build/ComfyRouter.ofx.bundle }
+        with: { name: ComfyRouter-Linux-x86_64, path: dist/ComfyRouter-Linux-x86_64.zip }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [secrets, macos, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY" \
+            --title "Comfy Router $GITHUB_REF_NAME" --generate-notes
